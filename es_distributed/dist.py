@@ -15,11 +15,11 @@ TASK_DATA_KEY = 'es:task_data'
 TASK_CHANNEL = 'es:task_channel'
 RESULTS_KEY = 'es:results'
 
-
+# 序列化
 def serialize(x):
     return pickle.dumps(x, protocol=-1)
 
-
+# 反序列化
 def deserialize(x):
     return pickle.loads(x)
 

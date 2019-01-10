@@ -199,6 +199,7 @@ def _demo():
         shutil.rmtree(dir)
     start(dir=dir)
     record_tabular("a", 3)
+    dump_tabular()
     record_tabular("b", 2.5)
     dump_tabular()
     record_tabular("b", -2.5)

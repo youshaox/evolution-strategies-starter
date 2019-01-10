@@ -1,3 +1,6 @@
+"""
+程序入口
+"""
 import errno
 import json
 import logging

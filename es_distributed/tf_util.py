@@ -126,17 +126,22 @@ def dense(x, size, name, weight_init=None, bias=True):
 # Basic Stuff
 # ================================================================
 
+# 构建函数对象。
 def function(inputs, outputs, updates=None, givens=None):
     if isinstance(outputs, list):
         return _Function(inputs, outputs, updates, givens=givens)
     elif isinstance(outputs, dict):
         f = _Function(inputs, outputs.values(), updates, givens=givens)
+        # 生成以outputs.keys()作为key，f(*inputs)为value的dict数据。
         return lambda *inputs : dict(zip(outputs.keys(), f(*inputs)))
     else:
         f = _Function(inputs, [outputs], updates, givens=givens)
         return lambda *inputs : f(*inputs)[0]
 
 class _Function(object):
+    """
+    用于更新旧的ob_mean和ob_sd
+    """
     def __init__(self, inputs, outputs, updates, givens, check_nan=False):
         assert all(len(i.op.inputs)==0 for i in inputs), "inputs should all be placeholders"
         self.inputs = inputs
@@ -145,10 +150,17 @@ class _Function(object):
         self.outputs_update = list(outputs) + [self.update_group]
         self.givens = {} if givens is None else givens
         self.check_nan = check_nan
+
     def __call__(self, *inputvals):
+        """
+        整个的作用其实就是把数据传入到placeholder中去
+        :param inputvals:
+        :return:
+        """
         assert len(inputvals) == len(self.inputs)
         feed_dict = dict(zip(self.inputs, inputvals))
         feed_dict.update(self.givens)
+        # 跑outputs_update后的结果
         results = get_session().run(self.outputs_update, feed_dict=feed_dict)[:-1]
         if self.check_nan:
             if any(np.isnan(r).any() for r in results):

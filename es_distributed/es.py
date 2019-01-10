@@ -43,6 +43,7 @@ class RunningStat(object):
 
     def set_from_init(self, init_mean, init_std, init_count):
         self.sum[:] = init_mean * init_count
+        # 对 （均值^2 + std^2）* init_count
         self.sumsq[:] = (np.square(init_mean) + np.square(init_std)) * init_count
         self.count = init_count
 
@@ -68,6 +69,7 @@ class SharedNoiseTable(object):
 
 def compute_ranks(x):
     """
+    返回数字相应的排序后的序号。
     Returns ranks in [0, len(x))
     Note: This is different from scipy.stats.rankdata, which returns ranks in [1, len(x)].
     """
@@ -133,6 +135,7 @@ def run_master(master_redis_cfg, log_dir, exp):
     from . import tabular_logger as tlogger
     logger.info('Tabular logging to {}'.format(log_dir))
     tlogger.start(log_dir)
+    # 建立环境
     config, env, sess, policy = setup(exp, single_threaded=False)
     master = MasterClient(master_redis_cfg)
     optimizer = {'sgd': SGD, 'adam': Adam}[exp['optimizer']['type']](policy, **exp['optimizer']['args'])
@@ -142,10 +145,14 @@ def run_master(master_redis_cfg, log_dir, exp):
         env.observation_space.shape,
         eps=1e-2  # eps to prevent dividing by zero at the beginning when computing mean/stdev
     )
+    # 从其他的policy开始初始化
     if 'init_from' in exp['policy']:
         logger.info('Initializing weights from {}'.format(exp['policy']['init_from']))
         policy.initialize_from(exp['policy']['init_from'], ob_stat)
 
+    ##############################
+    #这块没看懂
+    ##############################
     if config.episode_cutoff_mode.startswith('adaptive:'):
         _, args = config.episode_cutoff_mode.split(':')
         arg0, arg1, arg2 = args.split(',')
@@ -160,16 +167,21 @@ def run_master(master_redis_cfg, log_dir, exp):
     else:
         raise NotImplementedError(config.episode_cutoff_mode)
 
+    ##############################
+    # 这块没看懂
+    ##############################
+
     episodes_so_far = 0
     timesteps_so_far = 0
     tstart = time.time()
     master.declare_experiment(exp)
 
+    #### 和分布式相关
     while True:
         step_tstart = time.time()
         theta = policy.get_trainable_flat()
         assert theta.dtype == np.float32
-
+        # 分配任务
         curr_task_id = master.declare_task(Task(
             params=theta,
             ob_mean=ob_stat.mean if policy.needs_ob_stat else None,
@@ -178,6 +190,7 @@ def run_master(master_redis_cfg, log_dir, exp):
         ))
         tlogger.log('********** Iteration {} **********'.format(curr_task_id))
 
+        # 等待任务结果
         # Pop off results for the current task
         curr_task_results, eval_rets, eval_lens, worker_ids = [], [], [], []
         num_results_skipped, num_episodes_popped, num_timesteps_popped, ob_count_this_batch = 0, 0, 0, 0
@@ -197,6 +210,7 @@ def run_master(master_redis_cfg, log_dir, exp):
                     eval_rets.append(result.eval_return)
                     eval_lens.append(result.eval_length)
             else:
+                # 下面其实都是更新计数器等
                 # The real shit
                 assert (result.noise_inds_n.ndim == 1 and
                         result.returns_n2.shape == result.lengths_n2.shape == (len(result.noise_inds_n), 2))
@@ -239,6 +253,7 @@ def run_master(master_redis_cfg, log_dir, exp):
         else:
             raise NotImplementedError(config.return_proc_mode)
         # Compute and take step
+        # 很重要
         g, count = batched_weighted_sum(
             proc_returns_n2[:, 0] - proc_returns_n2[:, 1],
             (noise.get(idx, policy.num_params) for idx in noise_inds_n),
@@ -258,6 +273,7 @@ def run_master(master_redis_cfg, log_dir, exp):
             tslimit = int(tslimit_incr_ratio * tslimit)
             logger.info('Increased timestep limit from {} to {}'.format(old_tslimit, tslimit))
 
+        # 保存结果的snapshot 不用看看了
         step_tend = time.time()
         tlogger.record_tabular("EpRewMean", returns_n2.mean())
         tlogger.record_tabular("EpRewStd", returns_n2.std())
@@ -304,8 +320,10 @@ def rollout_and_update_ob_stat(policy, env, timestep_limit, rs, task_ob_stat, ca
     if policy.needs_ob_stat and calc_obstat_prob != 0 and rs.rand() < calc_obstat_prob:
         rollout_rews, rollout_len, obs = policy.rollout(
             env, timestep_limit=timestep_limit, save_obs=True, random_stream=rs)
+        # 这个update ob_stat的地方
         task_ob_stat.increment(obs.sum(axis=0), np.square(obs).sum(axis=0), len(obs))
     else:
+        # rollout_rews是训练所得到的rewards, rollout_len是训练所花的steps的长度
         rollout_rews, rollout_len = policy.rollout(env, timestep_limit=timestep_limit, random_stream=rs)
     return rollout_rews, rollout_len
 
@@ -331,6 +349,7 @@ def run_worker(relay_redis_cfg, noise, *, min_task_runtime=.2):
         if rs.rand() < config.eval_prob:
             # Evaluation: noiseless weights and noiseless actions
             policy.set_trainable_flat(task_data.params)
+            # eval_rews 就是rewards
             eval_rews, eval_length = policy.rollout(env)  # eval rollouts don't obey task_data.timestep_limit
             eval_return = eval_rews.sum()
             logger.info('Eval result: task={} return={:.3f} length={}'.format(task_id, eval_return, eval_length))

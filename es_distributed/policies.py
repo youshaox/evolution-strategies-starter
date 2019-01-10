@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 class Policy:
     def __init__(self, *args, **kwargs):
+
         self.args, self.kwargs = args, kwargs
         self.scope = self._initialize(*args, **kwargs)
         self.all_variables = tf.get_collection(tf.GraphKeys.VARIABLES, self.scope.name)
@@ -75,6 +76,7 @@ class Policy:
             obs = []
         ob = env.reset()
         for _ in range(timestep_limit):
+            # adavantage -> action
             ac = self.act(ob[None], random_stream=random_stream)[0]
             if save_obs:
                 obs.append(ob)
@@ -126,7 +128,7 @@ class MujocoPolicy(Policy):
             'Action bounds required'
 
         self.nonlin = {'tanh': tf.tanh, 'relu': tf.nn.relu, 'lrelu': U.lrelu, 'elu': tf.nn.elu}[nonlin_type]
-
+        # type(self).__name__ 就是MujocoPolicy
         with tf.variable_scope(type(self).__name__) as scope:
             # Observation normalization
             ob_mean = tf.get_variable(
@@ -135,6 +137,7 @@ class MujocoPolicy(Policy):
                 'ob_std', ob_space.shape, tf.float32, tf.constant_initializer(np.nan), trainable=False)
             in_mean = tf.placeholder(tf.float32, ob_space.shape)
             in_std = tf.placeholder(tf.float32, ob_space.shape)
+            # 重要 更新ob_mean 和ob_std，_set_ob_mean_std其实这是个函数
             self._set_ob_mean_std = U.function([in_mean, in_std], [], updates=[
                 tf.assign(ob_mean, in_mean),
                 tf.assign(ob_std, in_std),
@@ -142,7 +145,9 @@ class MujocoPolicy(Policy):
 
             # Policy network
             o = tf.placeholder(tf.float32, [None] + list(ob_space.shape))
-            a = self._make_net(tf.clip_by_value((o - ob_mean) / ob_std, -5.0, 5.0))
+            # advantage
+            a = self._make_net(tf.clip_by_value((o - ob_mean) / ob_std, -5.0, 5.0)) # 把标准化后的值控制在-5.0到5.0之间。
+            # self._act 是一个函数
             self._act = U.function([o], a)
         return scope
 
@@ -160,6 +165,7 @@ class MujocoPolicy(Policy):
         assert isinstance(self.ac_bins, str)
         ac_bin_mode, ac_bin_arg = self.ac_bins.split(':')
 
+        # 看起来和画图相关。
         if ac_bin_mode == 'uniform':
             # Uniformly spaced bins, from ac_space.low to ac_space.high
             num_ac_bins = int(ac_bin_arg)
